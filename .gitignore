@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Local state — never commit anything derived from a real session
+board-status.json
+kanban-state.json
+*.bak
+*.bak.*
+*.local

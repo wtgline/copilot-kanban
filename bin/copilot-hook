@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Copilot CLI hook handler for copilot-kanban.
+
+Invoked by GitHub Copilot CLI on session lifecycle events. Records each
+session's state so the Kanban board can tell a busy session from a free one,
+and surfaces a desktop notification when an agent finishes.
+
+Wired up by install.sh; you normally never run this by hand.
+
+    copilot-hook start     # sessionStart
+    copilot-hook prompt    # userPromptSubmitted
+    copilot-hook stop      # agentStop
+"""
+import sys, os, json, subprocess, fcntl, time
+
+COPILOT_HOME = os.environ.get("COPILOT_HOME") or os.path.expanduser("~/.copilot")
+STATUS = os.path.join(COPILOT_HOME, "board-status.json")
+MAX_PROMPT_CHARS = 120
+
+event = sys.argv[1] if len(sys.argv) > 1 else "unknown"
+
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    payload = {}
+
+sid = payload.get("sessionId") or payload.get("session_id") or "unknown"
+cwd = payload.get("cwd", "")
+
+
+def update(session_id, **fields):
+    """Merge fields into this session's entry, safely across parallel panes."""
+    os.makedirs(os.path.dirname(STATUS), exist_ok=True)
+    with open(STATUS, "a+", encoding="utf-8") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            f.seek(0)
+            try:
+                data = json.loads(f.read() or "{}")
+            except ValueError:
+                data = {}
+            data.setdefault(session_id, {}).update(fields)
+            f.seek(0)
+            f.truncate()
+            json.dump(data, f, indent=1)
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def session_name(session_id):
+    path = os.path.join(COPILOT_HOME, "session-state", session_id, "workspace.yaml")
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("name:"):
+                    return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return session_id[:8]
+
+
+def tmux(*args):
+    try:
+        subprocess.run(["tmux", *args], capture_output=True, timeout=3)
+    except Exception:
+        pass
+
+
+def notify(title, message):
+    """Desktop notification. macOS only; silently skipped elsewhere."""
+    if sys.platform != "darwin":
+        return
+    # Pass text via argv rather than interpolating into AppleScript source,
+    # so quotes or backslashes in a session name can't break (or inject into)
+    # the script.
+    script = ('on run argv\n'
+              '  display notification (item 1 of argv) '
+              'with title (item 2 of argv) sound name "Glass"\n'
+              'end run')
+    try:
+        subprocess.run(["osascript", "-e", script, message, title],
+                       capture_output=True, timeout=5)
+    except Exception:
+        pass
+
+
+if event == "prompt":
+    update(sid,
+           state="running",
+           last_msg=(payload.get("prompt") or "")[:MAX_PROMPT_CHARS],
+           cwd=cwd)
+    pane = os.environ.get("TMUX_PANE")
+    if pane:
+        tmux("set-option", "-p", "-t", pane, "@state", "running")
+
+elif event == "stop":
+    name = session_name(sid)
+    update(sid, state="stopped", cwd=cwd, stopped_at=time.time())
+    notify("Copilot finished", f"{name} finished")
+    pane = os.environ.get("TMUX_PANE")
+    if pane:
+        tmux("set-option", "-p", "-t", pane, "@state", "done")
+        tmux("set-option", "-p", "-t", pane, "pane-border-style", "fg=green")
+        tmux("display-message", f"finished: {name}")
+
+elif event == "start":
+    update(sid, state="idle", cwd=cwd)
