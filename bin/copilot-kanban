@@ -820,6 +820,71 @@ def move(card_id, column):
     return True, "archived" if column == "archived" else "moved"
 
 
+def rename(card_id, title):
+    """Give a card a name that means something to you.
+
+    For a session this rewrites `name` in Copilot's own workspace.yaml and
+    sets `user_named: true`, which is the flag Copilot checks before
+    auto-generating a name — so your title survives later turns instead of
+    being replaced by a summary of the conversation.
+    """
+    title = (title or "").strip()
+    if not title:
+        return False, "name cannot be empty"
+    if len(title) > 120:
+        return False, "name is too long (120 characters max)"
+    if "\n" in title or "\r" in title:
+        return False, "name must be a single line"
+
+    state = load_state()
+    if card_id in state["cards"]:
+        state["cards"][card_id]["title"] = title
+        write_state(state)
+        return True, "renamed"
+
+    if not valid_session_id(card_id):
+        return False, "card not found"
+    path = os.path.join(ROOT, card_id, "workspace.yaml")
+    if not os.path.isfile(path):
+        return False, "this session has no workspace file to rename"
+
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError as e:
+        return False, f"could not read session file: {e}"
+
+    out, saw_name, saw_flag = [], False, False
+    for line in lines:
+        if line.startswith("name:"):
+            out.append(f"name: {title}")
+            saw_name = True
+        elif line.startswith("user_named:"):
+            out.append("user_named: true")
+            saw_flag = True
+        else:
+            out.append(line)
+    if not saw_name:
+        out.append(f"name: {title}")
+    if not saw_flag:
+        out.append("user_named: true")
+
+    # Write via a temp file in the same directory and rename into place, so a
+    # reader never sees a half-written workspace.yaml.
+    tmp = path + ".kanban.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write("\n".join(out) + "\n")
+        os.replace(tmp, path)
+    except OSError as e:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return False, f"could not write session file: {e}"
+    return True, "renamed"
+
+
 def new_card(payload):
     state = load_state()
     cid = "task-" + uuid.uuid4().hex[:8]
@@ -949,6 +1014,12 @@ pre{background:#010409;border:1px solid var(--line);border-radius:8px;padding:12
 .toast.on{opacity:1}
 .hint{font-size:.74rem;color:var(--dim);padding:0 20px 14px}
 .summary-txt{font-size:.85rem;line-height:1.5;color:var(--tx);margin:6px 0 0}
+.title-row{display:flex;align-items:center;gap:10px}
+.title-row h3{margin:0;flex:1;word-break:break-word}
+.icon-btn{background:none;border:1px solid var(--line);border-radius:6px;color:var(--dim);
+ font-size:.85rem;padding:3px 9px;cursor:pointer;line-height:1.4}
+.icon-btn:hover{color:var(--acc);border-color:var(--acc)}
+#dRenameRow{margin-top:12px}
 .busy-note{display:flex;align-items:center;gap:8px;margin-top:14px;padding:10px 12px;
  background:#d2992214;border:1px solid #d2992244;border-radius:8px;
  font-size:.84rem;color:var(--yel)}
@@ -986,7 +1057,17 @@ pre{background:#010409;border:1px solid var(--line);border-radius:8px;padding:12
 </div></div>
 
 <div class="modal" id="mCard"><div class="sheet">
-  <h3 id="dTitle">—</h3>
+  <div class="title-row">
+    <h3 id="dTitle">—</h3>
+    <button class="icon-btn" id="dRenameBtn" onclick="startRename()" title="Rename this card">&#9998;</button>
+  </div>
+  <div id="dRenameRow" style="display:none">
+    <input id="dRenameInput" maxlength="120" placeholder="A name that means something to you">
+    <div class="row" style="margin-top:8px">
+      <button onclick="cancelRename()">Cancel</button>
+      <button class="primary" onclick="saveRename()">Save name</button>
+    </div>
+  </div>
   <div class="kv" id="dKv"></div>
   <div id="dPromptWrap"><label>Prompt</label><pre id="dPrompt"></pre></div>
   <div id="dOutWrap"><label>Latest agent output — summary</label>
@@ -1133,6 +1214,7 @@ async function openCard(c){
   aw.style.display=(c.pane && c.column!=='working')?'block':'none';
   document.getElementById('dAssignPrompt').value='';
   document.getElementById('dBusy').style.display='none';
+  cancelRename();
   const ow=document.getElementById('dOutWrap');
   ow.style.display='none';
   document.getElementById('dOutFull').style.display='none';
@@ -1146,6 +1228,33 @@ async function openCard(c){
       ow.style.display='block';
     }
   }
+}
+
+function startRename(){
+  const row=document.getElementById('dRenameRow');
+  const input=document.getElementById('dRenameInput');
+  input.value=current.title||'';
+  row.style.display='block';
+  document.getElementById('dRenameBtn').style.display='none';
+  input.focus();
+  input.select();
+}
+
+function cancelRename(){
+  document.getElementById('dRenameRow').style.display='none';
+  document.getElementById('dRenameBtn').style.display='';
+}
+
+async function saveRename(){
+  const title=document.getElementById('dRenameInput').value.trim();
+  if(!title){toast('name cannot be empty');return;}
+  const r=await api('/api/rename',{id:current.id,title:title});
+  if(!r.ok){toast('⚠ '+r.msg);return;}
+  current.title=title;
+  document.getElementById('dTitle').textContent=title;
+  cancelRename();
+  toast('renamed');
+  load(true);
 }
 
 function toggleFull(){
@@ -1205,6 +1314,10 @@ async function createTask(){
 }
 function closeAll(){document.querySelectorAll('.modal').forEach(m=>m.classList.remove('on'));paused=false;}
 document.querySelectorAll('.modal').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)closeAll();}));
+document.getElementById('dRenameInput').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();saveRename();}
+  if(e.key==='Escape'){e.preventDefault();e.stopPropagation();cancelRename();}
+});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeAll();});
 
 load();setInterval(load,2000);
@@ -1334,6 +1447,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/new":
                 ok, msg = new_card(payload)
                 msg = "created"
+            elif path == "/api/rename":
+                ok, msg = rename(payload.get("id"), payload.get("title"))
             elif path == "/api/delete":
                 ok, msg = delete_card(payload.get("id"))
             else:
