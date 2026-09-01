@@ -949,6 +949,9 @@ pre{background:#010409;border:1px solid var(--line);border-radius:8px;padding:12
 .toast.on{opacity:1}
 .hint{font-size:.74rem;color:var(--dim);padding:0 20px 14px}
 .summary-txt{font-size:.85rem;line-height:1.5;color:var(--tx);margin:6px 0 0}
+.busy-note{display:flex;align-items:center;gap:8px;margin-top:14px;padding:10px 12px;
+ background:#d2992214;border:1px solid #d2992244;border-radius:8px;
+ font-size:.84rem;color:var(--yel)}
 .link-btn{background:none;border:none;color:var(--acc);font-size:.76rem;cursor:pointer;
  padding:6px 0 0;text-decoration:underline;text-underline-offset:2px}
 .link-btn:hover{color:#79b8ff}
@@ -995,8 +998,12 @@ pre{background:#010409;border:1px solid var(--line);border-radius:8px;padding:12
     <label>Assign next task to this session <span style="color:var(--dim);text-transform:none;font-weight:400">— continues the same conversation</span></label>
     <textarea id="dAssignPrompt" placeholder="e.g. Now add unit tests for the function you just wrote"></textarea>
     <div class="row" style="margin-top:8px">
-      <button class="primary" onclick="assignTask()">Send &amp; jump to pane</button>
+      <button onclick="assignTask(false)">Send</button>
+      <button class="primary" onclick="assignTask(true)">Send &amp; jump to pane</button>
     </div>
+  </div>
+  <div id="dBusy" style="display:none">
+    <div class="busy-note"><span class="pulse"></span>Sent — this session is working on it now.</div>
   </div>
   <div class="row">
     <button class="danger" onclick="delCard()">Delete</button>
@@ -1125,6 +1132,7 @@ async function openCard(c){
   const aw=document.getElementById('dAssignWrap');
   aw.style.display=(c.pane && c.column!=='working')?'block':'none';
   document.getElementById('dAssignPrompt').value='';
+  document.getElementById('dBusy').style.display='none';
   const ow=document.getElementById('dOutWrap');
   ow.style.display='none';
   document.getElementById('dOutFull').style.display='none';
@@ -1148,16 +1156,27 @@ function toggleFull(){
   btn.textContent=showing?'Show full output':'Hide full output';
 }
 
-async function assignTask(){
-  const p=document.getElementById('dAssignPrompt').value.trim();
+async function assignTask(alsoJump){
+  const box=document.getElementById('dAssignPrompt');
+  const p=box.value.trim();
   if(!p){toast('type a task first');return;}
   const id=current.id;
   const r=await api('/api/assign',{id:id,prompt:p});
   if(!r.ok){toast('⚠ '+r.msg);return;}
-  toast(r.msg);
-  // The button promises a jump, so actually perform one.
-  await api('/api/focus',{id:id});
-  closeAll();
+  box.value='';
+  if(alsoJump){
+    // Only this button promised a jump, so only this one performs it.
+    await api('/api/focus',{id:id});
+    toast(r.msg);
+    closeAll();
+  }else{
+    // Stay put so you can keep working in the browser. The session is busy
+    // now, so swap the compose box for a status line rather than inviting a
+    // second send that would be rejected.
+    toast(r.msg);
+    document.getElementById('dAssignWrap').style.display='none';
+    document.getElementById('dBusy').style.display='block';
+  }
   load(true);
 }
 
