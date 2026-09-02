@@ -127,6 +127,7 @@ Nothing is typed or submitted.
 | `COPILOT_KANBAN_PORT` | `47900` | Port to serve on |
 | `COPILOT_KANBAN_TMUX` | auto-detected | tmux session to start new agents in |
 | `COPILOT_KANBAN_AUTO_APPROVE` | `1` | `0` drops `--yolo` from dispatched agents |
+| `COPILOT_KANBAN_NOTIFY` | `0` | `1` enables a desktop notification when an agent finishes (the board doesn't need it — this is cosmetic) |
 | `COPILOT_KANBAN_TERMINALS` | common terminals | Comma-separated apps to raise when jumping |
 | `COPILOT_HOME` | `~/.copilot` | Where Copilot CLI keeps its state |
 
