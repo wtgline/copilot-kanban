@@ -17,6 +17,12 @@ COPILOT_HOME = os.environ.get("COPILOT_HOME") or os.path.expanduser("~/.copilot"
 STATUS = os.path.join(COPILOT_HOME, "board-status.json")
 MAX_PROMPT_CHARS = 120
 
+# The desktop notification (sound + popup) is cosmetic only — the board gets
+# everything it needs from board-status.json regardless of whether this
+# fires. Off by default since a bell per finished agent gets old fast with
+# several running at once; set COPILOT_KANBAN_NOTIFY=1 to bring it back.
+NOTIFY_ENABLED = os.environ.get("COPILOT_KANBAN_NOTIFY", "0") == "1"
+
 event = sys.argv[1] if len(sys.argv) > 1 else "unknown"
 
 try:
@@ -67,8 +73,8 @@ def tmux(*args):
 
 
 def notify(title, message):
-    """Desktop notification. macOS only; silently skipped elsewhere."""
-    if sys.platform != "darwin":
+    """Desktop notification. Off by default (see NOTIFY_ENABLED); macOS only."""
+    if not NOTIFY_ENABLED or sys.platform != "darwin":
         return
     # Pass text via argv rather than interpolating into AppleScript source,
     # so quotes or backslashes in a session name can't break (or inject into)
